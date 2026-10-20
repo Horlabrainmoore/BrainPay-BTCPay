@@ -1,0 +1,23 @@
+.gitignore
+# Firebase
+google-services.json
+firebase-adminsdk*.json
+# Wallet backups
+*.wallet
+*.keystore
+*.seed
+*.mnemonic
+# Secrets
+.env
+.env.local
+.env.production
+# Node
+node_modules/
+Dist/
+# Logs
+logs
+*.log
+npm-debug.log*
+# OS
+.DS_Store
+Thumbs.db
