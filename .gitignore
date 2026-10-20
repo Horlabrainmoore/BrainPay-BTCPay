@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+.env
+.DS_Store
+
+# OS junk
+Thumbs.db
+*.swp
+
+# Logs
+logs/
+*.log
+
+# Build output
+dist/
+build/
+
+# Secrets
+*.secret
+*.pem
+*.key
+
+# Data outputs
+/data/*.bak
+/data/*.tmp
