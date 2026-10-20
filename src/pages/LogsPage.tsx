@@ -1,0 +1,336 @@
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { systemLogs } from "@/lib/mock-data";
+import { cn } from "@/lib/utils";
+import { CheckCircle, Info, AlertTriangle, XCircle, Search, RefreshCw, Copy, Check } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+
+const levelConfig = {
+  success: { icon: CheckCircle, color: 'text-success', bg: 'bg-success/10' },
+  info: { icon: Info, color: 'text-info', bg: 'bg-info/10' },
+  warning: { icon: AlertTriangle, color: 'text-warning', bg: 'bg-warning/10' },
+  error: { icon: XCircle, color: 'text-destructive', bg: 'bg-destructive/10' },
+};
+
+interface ProxyLog {
+  id: string;
+  correlation_id: string;
+  path: string;
+  method: string;
+  status: number | null;
+  ok: boolean;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}
+
+function CidChip({ cid }: { cid: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(cid);
+      setCopied(true);
+    } catch {
+      // Fallback for restrictive contexts
+      const ta = document.createElement("textarea");
+      ta.value = cid;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); setCopied(true); } catch { /* noop */ }
+      document.body.removeChild(ta);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied!" : "Copy correlation ID"}
+      aria-label={copied ? "Correlation ID copied" : "Copy correlation ID"}
+      data-testid="cid-chip"
+      data-cid={cid}
+      data-copied={copied ? "true" : "false"}
+      className={cn(
+        "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors",
+        copied
+          ? "border-success/50 text-success bg-success/10"
+          : "border-border text-muted-foreground hover:text-foreground bg-secondary/60",
+      )}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      <span>
+        {copied ? "Copied!" : <>cid: {cid.slice(0, 8)}…{cid.slice(-4)}</>}
+      </span>
+    </button>
+  );
+}
+
+
+function ProxyLogs() {
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: ["metacopier-proxy-logs"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("metacopier_proxy_logs")
+        .select("id, correlation_id, path, method, status, ok, duration_ms, error, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data as ProxyLog[];
+    },
+    refetchInterval: 10000,
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          Most recent 200 MetaCopier proxy requests. Auto-refreshes every 10s.
+        </p>
+        <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", isFetching && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="card-gradient rounded-lg border border-border divide-y divide-border">
+        {isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>}
+        {error && (
+          <div className="p-8 text-center text-sm text-destructive">
+            {(error as Error).message}
+          </div>
+        )}
+        {!isLoading && !error && data?.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No proxy requests recorded yet. Open the MetaCopier page to generate traffic.
+          </div>
+        )}
+        {data?.map((log) => {
+          const isErr = !log.ok;
+          const Icon = isErr ? XCircle : CheckCircle;
+          const color = isErr ? "text-destructive" : "text-success";
+          const bg = isErr ? "bg-destructive/10" : "bg-success/10";
+          return (
+            <div key={log.id} className="flex items-start gap-3 p-4 hover:bg-secondary/30 transition-colors">
+              <div className={cn("h-7 w-7 rounded-md flex items-center justify-center shrink-0 mt-0.5", bg)}>
+                <Icon className={cn("h-3.5 w-3.5", color)} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-border font-mono">
+                    {log.method}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[9px] px-1.5 py-0 h-4 font-mono",
+                      isErr ? "border-destructive/40 text-destructive" : "border-success/40 text-success",
+                    )}
+                  >
+                    {log.status ?? "—"}
+                  </Badge>
+                  <p className="text-sm text-foreground font-mono truncate">{log.path}</p>
+                  {log.duration_ms != null && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {log.duration_ms}ms
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <CidChip cid={log.correlation_id} />
+                </div>
+                {log.error && (
+                  <p className="text-[11px] text-destructive font-mono break-all">{log.error}</p>
+                )}
+              </div>
+              <span className="text-[10px] text-muted-foreground font-mono shrink-0 whitespace-nowrap">
+                {new Date(log.created_at).toLocaleString([], {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+                })}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SystemLogs() {
+  const [filter, setFilter] = useState("");
+  const [levelFilter, setLevelFilter] = useState<string | null>(null);
+
+  const filtered = systemLogs.filter(log => {
+    const matchesText = !filter || log.message.toLowerCase().includes(filter.toLowerCase()) || log.category.toLowerCase().includes(filter.toLowerCase());
+    const matchesLevel = !levelFilter || log.level === levelFilter;
+    return matchesText && matchesLevel;
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search logs..." value={filter} onChange={e => setFilter(e.target.value)}
+            className="pl-9 bg-secondary border-border font-mono text-sm" />
+        </div>
+        <div className="flex gap-1.5">
+          <button onClick={() => setLevelFilter(null)}
+            className={cn("text-[10px] px-3 py-1.5 rounded-md font-medium transition-colors",
+              !levelFilter ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+            )}>All</button>
+          {Object.keys(levelConfig).map(level => (
+            <button key={level} onClick={() => setLevelFilter(levelFilter === level ? null : level)}
+              className={cn("text-[10px] px-3 py-1.5 rounded-md font-medium capitalize transition-colors",
+                levelFilter === level ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+              )}>{level}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="card-gradient rounded-lg border border-border divide-y divide-border">
+        {filtered.map(log => {
+          const config = levelConfig[log.level];
+          const Icon = config.icon;
+          return (
+            <div key={log.id} className="flex items-start gap-3 p-4 hover:bg-secondary/30 transition-colors">
+              <div className={cn("h-7 w-7 rounded-md flex items-center justify-center shrink-0 mt-0.5", config.bg)}>
+                <Icon className={cn("h-3.5 w-3.5", config.color)} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-border font-mono">{log.category}</Badge>
+                  <p className="text-sm text-foreground">{log.message}</p>
+                </div>
+                {log.details && <p className="text-[11px] text-muted-foreground font-mono">{log.details}</p>}
+              </div>
+              <span className="text-[10px] text-muted-foreground font-mono shrink-0 whitespace-nowrap">
+                {new Date(log.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">No logs match your filters</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <DashboardLayout title="System Logs" subtitle="Monitor system events, transactions, and integration diagnostics">
+      <Tabs defaultValue="system" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="system">System</TabsTrigger>
+          <TabsTrigger value="metacopier">MetaCopier proxy</TabsTrigger>
+          <TabsTrigger value="moonpay">MoonPay events</TabsTrigger>
+        </TabsList>
+        <TabsContent value="system"><SystemLogs /></TabsContent>
+        <TabsContent value="metacopier"><ProxyLogs /></TabsContent>
+        <TabsContent value="moonpay"><MoonPayLogs /></TabsContent>
+      </Tabs>
+    </DashboardLayout>
+  );
+}
+
+function MoonPayLogs() {
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: ["moonpay-events"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("moonpay_events")
+        .select("id, event_type, status, transaction_id, currency_code, amount, base_currency_code, base_amount, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data as Array<{
+        id: string; event_type: string; status: string | null; transaction_id: string | null;
+        currency_code: string | null; amount: number | null; base_currency_code: string | null;
+        base_amount: number | null; created_at: string;
+      }>;
+    },
+    refetchInterval: 10000,
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          Most recent 200 MoonPay widget events. Auto-refreshes every 10s.
+        </p>
+        <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", isFetching && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+      <div className="card-gradient rounded-lg border border-border divide-y divide-border">
+        {isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>}
+        {error && <div className="p-8 text-center text-sm text-destructive">{(error as Error).message}</div>}
+        {!isLoading && !error && data?.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No MoonPay events recorded yet. Open the MoonPay page to trigger events.
+          </div>
+        )}
+        {data?.map((ev) => {
+          const isErr = ev.event_type.includes("failed") || ev.status === "failed";
+          const isOk = ev.event_type.includes("succeeded") || ev.status === "completed";
+          const Icon = isErr ? XCircle : isOk ? CheckCircle : Info;
+          const color = isErr ? "text-destructive" : isOk ? "text-success" : "text-info";
+          const bg = isErr ? "bg-destructive/10" : isOk ? "bg-success/10" : "bg-info/10";
+          return (
+            <div key={ev.id} className="flex items-start gap-3 p-4 hover:bg-secondary/30 transition-colors">
+              <div className={cn("h-7 w-7 rounded-md flex items-center justify-center shrink-0 mt-0.5", bg)}>
+                <Icon className={cn("h-3.5 w-3.5", color)} />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-border font-mono">
+                    {ev.event_type}
+                  </Badge>
+                  {ev.status && (
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-border font-mono">
+                      {ev.status}
+                    </Badge>
+                  )}
+                  {ev.amount != null && ev.currency_code && (
+                    <span className="text-xs font-mono text-foreground">
+                      {ev.amount} {ev.currency_code.toUpperCase()}
+                    </span>
+                  )}
+                  {ev.base_amount != null && ev.base_currency_code && (
+                    <span className="text-[11px] font-mono text-muted-foreground">
+                      ({ev.base_amount} {ev.base_currency_code.toUpperCase()})
+                    </span>
+                  )}
+                </div>
+                {ev.transaction_id && (
+                  <p className="text-[11px] text-muted-foreground font-mono break-all">tx: {ev.transaction_id}</p>
+                )}
+              </div>
+              <span className="text-[10px] text-muted-foreground font-mono shrink-0 whitespace-nowrap">
+                {new Date(ev.created_at).toLocaleString([], {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+                })}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
